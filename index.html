@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Airwaves</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.17/hls.min.js"></script>
+<style>
+:root{--bg:#14101f;--panel:#201a33;--line:#33294d;--text:#f1edfb;--dim:#a79fc0;--accent:#ff5d8f;color-scheme:dark}
+*{box-sizing:border-box;margin:0}
+html,body{background:var(--bg);color:var(--text);font-family:"Bricolage Grotesque",system-ui,sans-serif}
+body{padding:env(safe-area-inset-top,0) 0 0}
+header{padding:14px 12px 6px}
+h1{font-size:24px;font-weight:800;margin-bottom:10px}
+h1 span{color:var(--accent)}
+.row{display:flex;gap:8px}
+input,select{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px 12px;font:inherit;font-size:15px}
+select{flex:0 0 40%}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:10px 12px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:1px solid var(--line);background:none;color:var(--dim);border-radius:99px;padding:7px 13px;font:inherit;font-size:13px;cursor:pointer}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.info{padding:0 12px 6px;font-size:12px;color:var(--dim)}
+.list{padding:0 12px 110px;display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(290px,1fr))}
+.st{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;cursor:pointer;color:inherit;font:inherit;width:100%}
+.st.play{border-color:var(--accent)}
+.logo,.ph{width:46px;height:46px;border-radius:10px;flex:none}
+.logo{background:#fff;object-fit:contain}
+.ph{background:var(--line);display:grid;place-items:center;font-weight:800;color:var(--dim)}
+.meta{flex:1;min-width:0}
+.name{font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sub{font-size:12px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.star{background:none;border:0;font-size:22px;color:var(--dim);cursor:pointer;padding:6px}
+.star.on{color:var(--accent)}
+.more{display:block;margin:0 auto 130px;padding:11px 22px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit;cursor:pointer}
+.empty{padding:40px 20px;text-align:center;color:var(--dim);grid-column:1/-1}
+#bar{position:fixed;left:0;right:0;bottom:0;display:none;align-items:center;gap:12px;background:#2a2142;border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));z-index:5}
+#bar.on{display:flex}
+#pp{width:46px;height:46px;border-radius:50%;border:0;background:var(--accent);color:#fff;font-size:18px;cursor:pointer;flex:none}
+#bar .meta{flex:1}
+#status{font-size:12px;color:var(--accent);margin-top:2px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Air<span>waves</span> 📻</h1>
+  <div class="row">
+    <input id="q" type="search" placeholder="Search stations" autocomplete="off">
+    <select id="country" aria-label="Country"><option value="">All countries</option></select>
+  </div>
+</header>
+<div class="chips" id="chips"></div>
+<div class="info" id="info">Loading stations…</div>
+<div class="list" id="list"></div>
+<button class="more" id="more" hidden>Show more</button>
+<div id="bar">
+  <button id="pp" aria-label="Play or pause">❚❚</button>
+  <div class="meta"><div class="name" id="bname"></div><div class="sub" id="bsub"></div><div id="status"></div></div>
+  <button class="star" id="bstar" aria-label="Favorite">★</button>
+</div>
+<audio id="a" preload="none"></audio>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp;
+try { tg && (tg.ready(), tg.expand()); } catch (e) {}
+
+const store = {
+  get(k) { return new Promise(res => {
+    try { if (tg && tg.CloudStorage && tg.isVersionAtLeast("6.9")) return tg.CloudStorage.getItem(k, (e, v) => res(e ? null : v)); } catch (e) {}
+    try { res(localStorage.getItem(k)); } catch (e) { res(null); } }); },
+  set(k, v) {
+    try { if (tg && tg.CloudStorage && tg.isVersionAtLeast("6.9")) return tg.CloudStorage.setItem(k, v); } catch (e) {}
+    try { localStorage.setItem(k, v); } catch (e) {}
+  }
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const LIMIT = 50;
+const TAGS = [["pop","🎤"],["rock","🎸"],["news","📰"],["talk","🗣️"],["jazz","🎷"],["classical","🎻"],["hip hop","🎧"],["dance","💃"],["electronic","🎛️"],["country","🤠"],["sports","⚽"],["lofi","☕"],["chill","😌"],["reggae","🌴"],["latin","💃"],["metal","🤘"],["oldies","📼"]];
+
+let base = "https://all.api.radio-browser.info";
+let favs = [], list = [], cache = {}, cur = null, hls = null, canMore = false, token = 0;
+let state = {q: "", country: "", tag: "", offset: 0};
+const audio = $("a");
+
+async function pickServer() {
+  try {
+    const l = await (await fetch("https://all.api.radio-browser.info/json/servers")).json();
+    const names = [...new Set(l.map(x => x.name))];
+    base = "https://" + names[Math.floor(Math.random() * names.length)];
+  } catch (e) { base = "https://all.api.radio-browser.info"; }
+}
+async function api(path) {
+  try { const r = await fetch(base + path); if (!r.ok) throw 0; return await r.json(); }
+  catch (e) { await pickServer(); const r = await fetch(base + path); return r.json(); }
+}
+
+async function init() {
+  try { favs = JSON.parse((await store.get("radio-favs")) || "[]"); } catch (e) {}
+  $("chips").innerHTML = `<button class="chip on" data-t="">🔥 Popular</button><button class="chip" data-t="__fav">★ Favorites</button>` +
+    TAGS.map(([t, e]) => `<button class="chip" data-t="${esc(t)}">${e} ${esc(t[0].toUpperCase() + t.slice(1))}</button>`).join("");
+  await pickServer();
+  api("/json/countries?hidebroken=true").then(cs => {
+    cs.filter(c => c.iso_3166_1 && c.stationcount > 0).sort((a, b) => a.name.localeCompare(b.name))
+      .forEach(c => $("country").insertAdjacentHTML("beforeend", `<option value="${esc(c.iso_3166_1)}">${esc(c.name)}</option>`));
+  }).catch(() => {});
+  load(true);
+}
+
+async function load(reset) {
+  const my = ++token;
+  if (reset) { state.offset = 0; list = []; }
+  $("info").textContent = "Loading stations…";
+  try {
+    let d;
+    if (state.tag === "__fav") {
+      d = favs.length ? await api("/json/stations/byuuid?uuids=" + favs.join(",")) : [];
+      canMore = false;
+    } else {
+      const p = new URLSearchParams({limit: LIMIT, offset: state.offset, hidebroken: "true", is_https: "true", order: "clickcount", reverse: "true"});
+      if (state.q) p.set("name", state.q);
+      if (state.country) p.set("countrycode", state.country);
+      if (state.tag) { p.set("tag", state.tag); p.set("tagExact", "true"); }
+      d = await api("/json/stations/search?" + p);
+      canMore = d.length === LIMIT; state.offset += LIMIT;
+    }
+    if (my !== token) return;
+    d = d.filter(s => s.url_resolved && s.url_resolved.startsWith("https://"));
+    d.forEach(s => cache[s.stationuuid] = s);
+    list = list.concat(d);
+    render();
+  } catch (e) {
+    if (my === token) $("info").textContent = "Couldn't load stations. Check your connection and try again.";
+  }
+}
+
+function render() {
+  $("info").textContent = list.length + " station" + (list.length === 1 ? "" : "s") + (canMore ? "+" : "");
+  $("list").innerHTML = list.map(s => {
+    const logo = s.favicon && s.favicon.startsWith("https://")
+      ? `<img class="logo" src="${esc(s.favicon)}" alt="" loading="lazy" onerror="this.outerHTML='<div class=ph>${esc((s.name || "?").charAt(0))}</div>'">`
+      : `<div class="ph">${esc((s.name || "?").charAt(0))}</div>`;
+    const tags = (s.tags || "").split(",").filter(Boolean).slice(0, 2).join(", ");
+    const sub = [s.country, tags, s.bitrate ? s.bitrate + " kbps" : ""].filter(Boolean).join(" · ");
+    return `<div class="st${cur && cur.stationuuid === s.stationuuid ? " play" : ""}" data-id="${esc(s.stationuuid)}" role="button" tabindex="0">${logo}
+      <div class="meta"><div class="name">${esc((s.name || "").trim())}</div><div class="sub">${esc(sub)}</div></div>
+      <button class="star${favs.includes(s.stationuuid) ? " on" : ""}" data-fav="${esc(s.stationuuid)}" aria-label="Favorite">★</button></div>`;
+  }).join("") || `<div class="empty">${state.tag === "__fav" ? "No favorites yet. Tap ★ on a station to save it." : "No stations found. Try another search."}</div>`;
+  $("more").hidden = !canMore;
+}
+
+function toggleFav(id) {
+  favs = favs.includes(id) ? favs.filter(x => x !== id) : [id, ...favs].slice(0, 90);
+  store.set("radio-favs", JSON.stringify(favs));
+  if (cur) $("bstar").classList.toggle("on", favs.includes(cur.stationuuid));
+  if (state.tag === "__fav") list = list.filter(s => favs.includes(s.stationuuid));
+  render();
+}
+
+function halt() {
+  if (hls) { hls.destroy(); hls = null; }
+  audio.pause(); audio.removeAttribute("src"); audio.load();
+}
+function setStatus(t) { $("status").textContent = t; }
+
+function play(s) {
+  cur = s; halt();
+  $("bar").classList.add("on");
+  $("bname").textContent = (s.name || "").trim();
+  $("bsub").textContent = [s.country, s.codec].filter(Boolean).join(" · ");
+  $("bstar").classList.toggle("on", favs.includes(s.stationuuid));
+  $("pp").textContent = "❚❚"; setStatus("Connecting…");
+  if (String(s.hls) === "1" && window.Hls && Hls.isSupported()) {
+    hls = new Hls();
+    hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) fail(); });
+    hls.loadSource(s.url_resolved); hls.attachMedia(audio);
+  } else { audio.src = s.url_resolved; }
+  audio.play().catch(() => {});
+  fetch(base + "/json/url/" + s.stationuuid).catch(() => {}); // counts a listen for the directory
+  try { navigator.mediaSession.metadata = new MediaMetadata({title: (s.name || "").trim(), artist: s.country || "Radio"}); } catch (e) {}
+  render();
+}
+function fail() { halt(); $("pp").textContent = "▶"; setStatus("This station isn't working right now. Try another."); }
+
+audio.onplaying = () => { setStatus("● Live"); $("pp").textContent = "❚❚"; };
+audio.onwaiting = () => setStatus("Buffering…");
+audio.onerror = () => { if (cur) fail(); };
+$("pp").onclick = () => { if (!cur) return; if (!audio.paused) { halt(); $("pp").textContent = "▶"; setStatus("Paused"); } else play(cur); };
+$("bstar").onclick = () => cur && toggleFav(cur.stationuuid);
+
+let timer;
+$("q").addEventListener("input", e => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value.trim(); if (state.tag === "__fav") state.tag = ""; syncChips(); load(true); }, 350); });
+$("country").addEventListener("change", e => { state.country = e.target.value; if (state.tag === "__fav") state.tag = ""; syncChips(); load(true); });
+function syncChips() { document.querySelectorAll(".chip").forEach(x => x.classList.toggle("on", x.dataset.t === state.tag)); }
+$("chips").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return; state.tag = b.dataset.t; syncChips(); load(true); });
+$("list").addEventListener("click", e => {
+  const f = e.target.closest("[data-fav]"); if (f) { e.stopPropagation(); return toggleFav(f.dataset.fav); }
+  const c = e.target.closest(".st"); if (c && cache[c.dataset.id]) play(cache[c.dataset.id]);
+});
+$("list").addEventListener("keydown", e => { if (e.key === "Enter") { const c = e.target.closest(".st"); if (c && cache[c.dataset.id]) play(cache[c.dataset.id]); } });
+$("more").addEventListener("click", () => load(false));
+
+init();
+</script>
+</body>
+</html>
