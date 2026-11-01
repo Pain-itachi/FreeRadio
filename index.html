@@ -110,6 +110,21 @@ async function init() {
       .forEach(c => $("country").insertAdjacentHTML("beforeend", `<option value="${esc(c.iso_3166_1)}">${esc(c.name)}</option>`));
   }).catch(() => {});
   load(true);
+  intro();
+}
+
+// Intro: open on NRJ. Prefers the NRJ of the user's country, then NRJ France, then the most listened-to NRJ.
+async function intro() {
+  try {
+    const p = new URLSearchParams({name: "NRJ", limit: 40, hidebroken: "true", is_https: "true", order: "clickcount", reverse: "true"});
+    const d = (await api("/json/stations/search?" + p)).filter(s => s.url_resolved && s.url_resolved.startsWith("https://") && /^nrj\b/i.test((s.name || "").trim()));
+    if (!d.length || cur) return; // nothing found, or the user already picked a station
+    const home = ((navigator.language || "").split("-")[1] || "").toUpperCase();
+    const score = s => (s.countrycode === home ? 100 : 0) + (s.countrycode === "FR" ? 50 : 0) + (/^nrj(\s+(radio|fm|france))?$/i.test((s.name || "").trim()) ? 30 : 0);
+    d.sort((a, b) => score(b) - score(a) || (b.clickcount || 0) - (a.clickcount || 0));
+    cache[d[0].stationuuid] = d[0];
+    play(d[0]);
+  } catch (e) {}
 }
 
 async function load(reset) {
@@ -180,7 +195,7 @@ function play(s) {
     hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) fail(); });
     hls.loadSource(s.url_resolved); hls.attachMedia(audio);
   } else { audio.src = s.url_resolved; }
-  audio.play().catch(() => {});
+  audio.play().catch(() => { $("pp").textContent = "▶"; setStatus("Tap ▶ to listen"); });
   fetch(base + "/json/url/" + s.stationuuid).catch(() => {}); // counts a listen for the directory
   try { navigator.mediaSession.metadata = new MediaMetadata({title: (s.name || "").trim(), artist: s.country || "Radio"}); } catch (e) {}
   render();
